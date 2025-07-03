@@ -1,4 +1,5 @@
-#pip install yt-dlp mediapipe opencv-python
+#pip install yt-dlp mediapipe opencv-python numpy matplotlib
+# Python 3.7 이상 – 3.10 이하 권장 (특히 3.8~3.10에서 안정적으로 동작합니다)
 
 
 #!/usr/bin/env python3
