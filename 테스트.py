@@ -1,20 +1,17 @@
-# GPU있으면 pip install yt-dlp mediapipe opencv-python numpy matplotlib ultralytics 
-# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117
-
-# CPU면 pip install yt-dlp mediapipe opencv-python numpy matplotlib ultralytics
-# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-
-
-# Python 3.7 이상 – 3.10 이하 권장 (특히 3.8~3.10에서 안정적으로 동작합니다)
-# 개발 환경 3.10.8, Windows 11
-
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
 Prerequisites:
-    pip install yt-dlp ultralytics opencv-python numpy matplotlib mediapipe
+
+# GPU 환경용 (CUDA 11.x 빌드)
+pip install yt-dlp ultralytics opencv-python numpy matplotlib torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# CPU 전용 환경용
+pip install yt-dlp ultralytics opencv-python numpy matplotlib torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+또는, Ultraytics(YOLOv8) 없이 MediaPipe만 쓰려면:
+pip install yt-dlp mediapipe opencv-python numpy matplotlib
 """
 
 import os
@@ -26,17 +23,18 @@ from urllib.parse import urlparse, parse_qs
 
 import cv2
 import numpy as np
-import matplotlib; matplotlib.use('Agg')
+import matplotlib; matplotlib.use('Agg')  # suppress tkagg messages
 from yt_dlp import YoutubeDL
-import mediapipe as mp
 
-# GPU에서 YOLOv8-seg 사용 여부 결정
+# Try to import YOLOv8-seg; if unavailable, skip
 try:
     import torch
     from ultralytics import YOLO
-    USE_YOLO = torch.cuda.is_available()
+    YOLO_AVAILABLE = True
 except ImportError:
-    USE_YOLO = False
+    YOLO_AVAILABLE = False
+
+import mediapipe as mp
 
 
 def normalize_youtube_url(url: str) -> str:
@@ -98,21 +96,27 @@ def process_with_mediapipe(input_path: str, output_path: str):
     fourcc = cv2.VideoWriter_fourcc(*'avc1')
     out    = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
+    frame_idx = 0
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+        frame_idx += 1
+
         rgb     = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         res     = seg.process(rgb)
         mask    = res.segmentation_mask
-        # None 체크
         if mask is None:
             mask = np.zeros((height, width), dtype=np.uint8)
         else:
             mask = (mask > 0.5).astype(np.uint8)
-        bg  = np.zeros_like(frame)
+
+        bg   = np.zeros_like(frame)
         comp = np.where(mask[..., None], frame, bg)
         out.write(comp)
+
+        if frame_idx % 100 == 0:
+            logger.info("  • %d 프레임 처리 중…", frame_idx)
 
     cap.release()
     out.release()
@@ -122,9 +126,11 @@ def process_with_mediapipe(input_path: str, output_path: str):
 
 def process_with_yoloseg(input_path: str, output_path: str, model_name='yolov8n-seg.pt'):
     logger.info("▶ YOLOv8-seg 모델 로드: %s", model_name)
-    model = YOLO(model_name).to('cuda')
-    cap   = cv2.VideoCapture(input_path)
+    # CPU/GPU 자동 선택
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = YOLO(model_name).to(device)
 
+    cap = cv2.VideoCapture(input_path)
     fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
     width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
@@ -140,9 +146,8 @@ def process_with_yoloseg(input_path: str, output_path: str, model_name='yolov8n-
 
         results = model(frame)[0]
 
-        # masks가 None일 수 있으므로 안전하게 처리
         masks = []
-        if results.masks is not None and results.masks.data is not None:
+        if results.masks and results.masks.data is not None:
             for cls, m in zip(results.boxes.cls, results.masks.data):
                 if int(cls) == 0:
                     masks.append(m.cpu().numpy())
@@ -175,7 +180,7 @@ if __name__ == '__main__':
     logger = logging.getLogger(__name__)
 
     raw = input('유튜브 링크: ').strip()
-    if not raw.startswith(('http://', 'https://')):
+    if not raw.startswith(('http://','https://')):
         raw = 'https://' + raw
     url = normalize_youtube_url(raw)
     logger.info("▶ 정규화 URL: %s", url)
@@ -190,11 +195,18 @@ if __name__ == '__main__':
     tmp_pref   = tempfile.NamedTemporaryFile(delete=False).name
     video_file = download_youtube_video(url, tmp_pref, mh)
 
-    if USE_YOLO:
-        logger.info("▶ GPU 감지됨: YOLOv8-seg 사용")
+    # 사용자 선택: YOLO 또는 MediaPipe
+    if YOLO_AVAILABLE:
+        choice = input('세그멘테이션 방법을 선택하세요 (1: YOLOv8-seg, 2: MediaPipe) [기본 1]: ').strip() or '1'
+    else:
+        logger.warning("⚠️ YOLOv8-seg 라이브러리 미설치: MediaPipe만 사용 가능합니다.")
+        choice = '2'
+
+    if choice == '1' and YOLO_AVAILABLE:
+        logger.info("▶ 선택됨: YOLOv8-seg")
         process_with_yoloseg(video_file, output)
     else:
-        logger.info("▶ GPU 미감지: MediaPipe 사용")
+        logger.info("▶ 선택됨: MediaPipe")
         process_with_mediapipe(video_file, output)
 
     # 임시 파일 정리
