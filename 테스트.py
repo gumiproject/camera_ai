@@ -5,13 +5,13 @@
 Prerequisites:
 
 # GPU 환경용 (CUDA 11.x 빌드)
-pip install yt-dlp ultralytics opencv-python numpy matplotlib torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install yt_dlp ultralytics opencv-python numpy matplotlib torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
 # CPU 전용 환경용
-pip install yt-dlp ultralytics opencv-python numpy matplotlib torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install yt_dlp ultralytics opencv-python numpy matplotlib torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 또는, Ultraytics(YOLOv8) 없이 MediaPipe만 쓰려면:
-pip install yt-dlp mediapipe opencv-python numpy matplotlib
+pip install yt_dlp mediapipe opencv-python numpy matplotlib
 """
 
 import os
