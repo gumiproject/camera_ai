@@ -1,26 +1,21 @@
 #pip install yt-dlp mediapipe opencv-python numpy matplotlib
 # Python 3.7 이상 – 3.10 이하 권장 (특히 3.8~3.10에서 안정적으로 동작합니다)
+# 개발 환경 3.10.8, Windows 11
 
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
-import sys
-import tempfile
-import logging
-import shutil
+import os, sys, tempfile, logging, shutil
 from urllib.parse import urlparse, parse_qs
 
-import cv2
-import numpy as np
-import matplotlib; matplotlib.use('Agg')
+import cv2, numpy as np
+import matplotlib; matplotlib.use('Agg')  # tkagg 메시지 억제
 import mediapipe as mp
 from yt_dlp import YoutubeDL
 
 
-def normalize_youtube_url(url: str) -> str:
-    """유튜브 URL에서 video ID만 뽑아 https://www.youtube.com/watch?v=<ID> 형태로 반환"""
+def normalize_youtube_url(url: str) -> str:  # 유튜브 URL에서 video ID만 뽑아 정규화
     parsed = urlparse(url)
     host = parsed.hostname or ''
     vid = None
@@ -33,34 +28,23 @@ def normalize_youtube_url(url: str) -> str:
     return f'https://www.youtube.com/watch?v={vid}' if vid else url
 
 
-def download_youtube_video(url: str, tmp_prefix: str) -> str:
-    """
-    yt_dlp로 비디오 다운로드.
-    - FFmpeg 있으면 bestvideo+bestaudio 병합(mp4)
-    - 없으면 best[ext=mp4] 단일 progressive 스트림
-    반환: 생성된 .mp4 경로
-    """
+def download_youtube_video(url: str, tmp_prefix: str, max_height: int) -> str:  # 영상 다운로드
     logger.info("▶ 다운로드 시작: %s", url)
-
     has_ffmpeg = shutil.which("ffmpeg") is not None
 
     if has_ffmpeg:
-        # video+audio separate → mp4 병합
         ydl_opts = {
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
+            'format': f'bestvideo[height<={max_height}]+bestaudio/best',
             'merge_output_format': 'mp4',
             'outtmpl': tmp_prefix + '.%(ext)s',
-            'quiet': True,
-            'no_warnings': True,
+            'quiet': True, 'no_warnings': True,
         }
     else:
-        logger.warning("⚠️ ffmpeg가 감지되지 않아 progressive mp4 스트림만 다운로드합니다.")
-        # audio+video 포함된 가장 화질 좋은 mp4 단일 스트림
+        logger.warning("⚠️ ffmpeg 미설치: progressive mp4 스트림만 다운로드합니다.")
         ydl_opts = {
-            'format': 'best[ext=mp4]/best',
+            'format': f'best[height<={max_height}][ext=mp4]',
             'outtmpl': tmp_prefix + '.%(ext)s',
-            'quiet': True,
-            'no_warnings': True,
+            'quiet': True, 'no_warnings': True,
         }
 
     try:
@@ -79,19 +63,18 @@ def download_youtube_video(url: str, tmp_prefix: str) -> str:
     return mp4_path
 
 
-def process_video(input_path: str, output_path: str):
-    """Selfie Segmentation으로 사람만 남기고 배경을 검은색으로 바꿔 저장"""
+def process_video(input_path: str, output_path: str):  # 배경 제거 처리
     logger.info("▶ 배경 제거 처리 시작")
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         logger.error("❌ 파일 열기 실패: %s", input_path)
         sys.exit(1)
 
-    fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out    = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
+    h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')  # H.264 코덱
+    out    = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
 
     with mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1) as seg:
         idx = 0
@@ -102,10 +85,13 @@ def process_video(input_path: str, output_path: str):
                 break
             idx += 1
 
-            rgb  = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mask = seg.process(rgb).segmentation_mask
-            if mask is None:
-                mask = np.zeros((height, width), dtype=np.float32)
+            rgb     = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = seg.process(rgb)
+            # segmentation_mask가 None일 때만 대체 배열 생성
+            if results.segmentation_mask is None:
+                mask = np.zeros((h, w), dtype=np.float32)
+            else:
+                mask = results.segmentation_mask
 
             bg       = np.zeros_like(frame)
             composed = np.where(mask[..., None] > 0.5, frame, bg)
@@ -128,26 +114,25 @@ if __name__ == '__main__':
     )
     logger = logging.getLogger(__name__)
 
-    # 1) URL 입력 및 정규화
     raw = input('유튜브 영상 링크를 입력하세요: ').strip()
     if not raw.startswith(('http://', 'https://')):
         raw = 'https://' + raw
     url = normalize_youtube_url(raw)
     logger.info("▶ 사용 URL (정규화 후): %s", url)
 
-    # 2) 출력 파일명
     output = input('저장할 파일명을 입력하세요 (기본: output.mp4): ').strip() or 'output.mp4'
 
-    # 3) 임시 prefix
-    tmp_prefix = tempfile.NamedTemporaryFile(delete=False).name
+    try:
+        mh = int(input('최대 해상도 높이(pixels) 입력(예:2160,1440,1080; 기본1080): ').strip() or '1080')
+    except ValueError:
+        mh = 1080
+    logger.info("▶ 선택된 최대 해상도: %d", mh)
 
-    # 4) 다운로드 & 배경 제거
-    video_file = download_youtube_video(url, tmp_prefix)
+    tmp_prefix = tempfile.NamedTemporaryFile(delete=False).name
+    video_file = download_youtube_video(url, tmp_prefix, mh)
     process_video(video_file, output)
 
-    # 5) 임시 파일들(.mp4, .m4a 등) 삭제
+    # 임시 파일(.mp4, .m4a, .webm 등) 정리
     for ext in ('.mp4', '.m4a', '.webm', ''):
-        try:
-            os.remove(tmp_prefix + ext)
-        except OSError:
-            pass
+        try: os.remove(tmp_prefix + ext)
+        except: pass
