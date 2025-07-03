@@ -1,4 +1,10 @@
-#pip install yt-dlp mediapipe opencv-python numpy matplotlib
+# GPU있으면 pip install yt-dlp mediapipe opencv-python numpy matplotlib ultralytics 
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117
+
+# CPU면 pip install yt-dlp mediapipe opencv-python numpy matplotlib ultralytics
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+
 # Python 3.7 이상 – 3.10 이하 권장 (특히 3.8~3.10에서 안정적으로 동작합니다)
 # 개발 환경 3.10.8, Windows 11
 
@@ -6,16 +12,34 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os, sys, tempfile, logging, shutil
+"""
+Prerequisites:
+    pip install yt-dlp ultralytics opencv-python numpy matplotlib mediapipe
+"""
+
+import os
+import sys
+import tempfile
+import logging
+import shutil
 from urllib.parse import urlparse, parse_qs
 
-import cv2, numpy as np
-import matplotlib; matplotlib.use('Agg')  # tkagg 메시지 억제
-import mediapipe as mp
+import cv2
+import numpy as np
+import matplotlib; matplotlib.use('Agg')
 from yt_dlp import YoutubeDL
+import mediapipe as mp
+
+# GPU에서 YOLOv8-seg 사용 여부 결정
+try:
+    import torch
+    from ultralytics import YOLO
+    USE_YOLO = torch.cuda.is_available()
+except ImportError:
+    USE_YOLO = False
 
 
-def normalize_youtube_url(url: str) -> str:  # 유튜브 URL에서 video ID만 뽑아 정규화
+def normalize_youtube_url(url: str) -> str:
     parsed = urlparse(url)
     host = parsed.hostname or ''
     vid = None
@@ -28,27 +52,27 @@ def normalize_youtube_url(url: str) -> str:  # 유튜브 URL에서 video ID만 �
     return f'https://www.youtube.com/watch?v={vid}' if vid else url
 
 
-def download_youtube_video(url: str, tmp_prefix: str, max_height: int) -> str:  # 영상 다운로드
+def download_youtube_video(url: str, tmp_prefix: str, max_height: int) -> str:
     logger.info("▶ 다운로드 시작: %s", url)
     has_ffmpeg = shutil.which("ffmpeg") is not None
 
     if has_ffmpeg:
-        ydl_opts = {
+        opts = {
             'format': f'bestvideo[height<={max_height}]+bestaudio/best',
             'merge_output_format': 'mp4',
             'outtmpl': tmp_prefix + '.%(ext)s',
             'quiet': True, 'no_warnings': True,
         }
     else:
-        logger.warning("⚠️ ffmpeg 미설치: progressive mp4 스트림만 다운로드합니다.")
-        ydl_opts = {
+        logger.warning("⚠️ ffmpeg 미설치: progressive mp4만 다운로드")
+        opts = {
             'format': f'best[height<={max_height}][ext=mp4]',
             'outtmpl': tmp_prefix + '.%(ext)s',
             'quiet': True, 'no_warnings': True,
         }
 
     try:
-        with YoutubeDL(ydl_opts) as ydl:
+        with YoutubeDL(opts) as ydl:
             ydl.download([url])
     except Exception as e:
         logger.error("❌ 다운로드 실패: %s", e)
@@ -56,83 +80,126 @@ def download_youtube_video(url: str, tmp_prefix: str, max_height: int) -> str:  
 
     mp4_path = tmp_prefix + '.mp4'
     if not os.path.isfile(mp4_path) or os.path.getsize(mp4_path) == 0:
-        logger.error("❌ 다운로드된 mp4 파일이 없거나 손상되었습니다: %s", mp4_path)
+        logger.error("❌ 잘못된 mp4: %s", mp4_path)
         sys.exit(1)
 
     logger.info("✅ 다운로드 완료: %s", mp4_path)
     return mp4_path
 
 
-def process_video(input_path: str, output_path: str):  # 배경 제거 처리
-    logger.info("▶ 배경 제거 처리 시작")
+def process_with_mediapipe(input_path: str, output_path: str):
+    logger.info("▶ MediaPipe 세그멘테이션 시작")
+    seg = mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1)
     cap = cv2.VideoCapture(input_path)
-    if not cap.isOpened():
-        logger.error("❌ 파일 열기 실패: %s", input_path)
-        sys.exit(1)
 
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
-    h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
-    fourcc = cv2.VideoWriter_fourcc(*'avc1')  # H.264 코덱
-    out    = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+    fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
+    out    = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-    with mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1) as seg:
-        idx = 0
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                logger.info("▶ 프레임 처리 완료 (총 %d 프레임)", idx)
-                break
-            idx += 1
-
-            rgb     = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = seg.process(rgb)
-            # segmentation_mask가 None일 때만 대체 배열 생성
-            if results.segmentation_mask is None:
-                mask = np.zeros((h, w), dtype=np.float32)
-            else:
-                mask = results.segmentation_mask
-
-            bg       = np.zeros_like(frame)
-            composed = np.where(mask[..., None] > 0.5, frame, bg)
-            out.write(composed)
-
-            if idx % 100 == 0:
-                logger.info("  • %d 프레임 처리 중…", idx)
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        rgb     = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        res     = seg.process(rgb)
+        mask    = res.segmentation_mask
+        # None 체크
+        if mask is None:
+            mask = np.zeros((height, width), dtype=np.uint8)
+        else:
+            mask = (mask > 0.5).astype(np.uint8)
+        bg  = np.zeros_like(frame)
+        comp = np.where(mask[..., None], frame, bg)
+        out.write(comp)
 
     cap.release()
     out.release()
-    logger.info("✅ 최종 파일 저장됨: %s", output_path)
+    seg.close()
+    logger.info("✅ MediaPipe 처리 완료: %s", output_path)
+
+
+def process_with_yoloseg(input_path: str, output_path: str, model_name='yolov8n-seg.pt'):
+    logger.info("▶ YOLOv8-seg 모델 로드: %s", model_name)
+    model = YOLO(model_name).to('cuda')
+    cap   = cv2.VideoCapture(input_path)
+
+    fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
+    out    = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+    frame_idx = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_idx += 1
+
+        results = model(frame)[0]
+
+        # masks가 None일 수 있으므로 안전하게 처리
+        masks = []
+        if results.masks is not None and results.masks.data is not None:
+            for cls, m in zip(results.boxes.cls, results.masks.data):
+                if int(cls) == 0:
+                    masks.append(m.cpu().numpy())
+
+        if masks:
+            combined = np.clip(sum(masks), 0, 1).astype(np.uint8)
+            combined_up = cv2.resize(
+                combined, (width, height),
+                interpolation=cv2.INTER_NEAREST
+            )
+            bg   = np.zeros_like(frame)
+            comp = np.where(combined_up[..., None], frame, bg)
+        else:
+            comp = np.zeros_like(frame)
+
+        out.write(comp)
+        if frame_idx % 50 == 0:
+            logger.info("  • %d 프레임 처리 중…", frame_idx)
+
+    cap.release()
+    out.release()
+    logger.info("✅ YOLO 처리 완료: %s", output_path)
 
 
 if __name__ == '__main__':
-    # 로깅 설정
     logging.basicConfig(
         format='%(asctime)s %(levelname)s: %(message)s',
-        level=logging.INFO,
-        datefmt='%H:%M:%S'
+        level=logging.INFO, datefmt='%H:%M:%S'
     )
     logger = logging.getLogger(__name__)
 
-    raw = input('유튜브 영상 링크를 입력하세요: ').strip()
+    raw = input('유튜브 링크: ').strip()
     if not raw.startswith(('http://', 'https://')):
         raw = 'https://' + raw
     url = normalize_youtube_url(raw)
-    logger.info("▶ 사용 URL (정규화 후): %s", url)
+    logger.info("▶ 정규화 URL: %s", url)
 
-    output = input('저장할 파일명을 입력하세요 (기본: output.mp4): ').strip() or 'output.mp4'
-
+    output = input('저장 파일명 (기본 output.mp4): ').strip() or 'output.mp4'
     try:
-        mh = int(input('최대 해상도 높이(pixels) 입력(예:2160,1440,1080; 기본1080): ').strip() or '1080')
+        mh = int(input('최대 해상도 높이 (예:2160,1440,1080; 기본1080): ').strip() or '1080')
     except ValueError:
         mh = 1080
-    logger.info("▶ 선택된 최대 해상도: %d", mh)
+    logger.info("▶ 해상도 제한: %d", mh)
 
-    tmp_prefix = tempfile.NamedTemporaryFile(delete=False).name
-    video_file = download_youtube_video(url, tmp_prefix, mh)
-    process_video(video_file, output)
+    tmp_pref   = tempfile.NamedTemporaryFile(delete=False).name
+    video_file = download_youtube_video(url, tmp_pref, mh)
 
-    # 임시 파일(.mp4, .m4a, .webm 등) 정리
+    if USE_YOLO:
+        logger.info("▶ GPU 감지됨: YOLOv8-seg 사용")
+        process_with_yoloseg(video_file, output)
+    else:
+        logger.info("▶ GPU 미감지: MediaPipe 사용")
+        process_with_mediapipe(video_file, output)
+
+    # 임시 파일 정리
     for ext in ('.mp4', '.m4a', '.webm', ''):
-        try: os.remove(tmp_prefix + ext)
-        except: pass
+        try:
+            os.remove(tmp_pref + ext)
+        except OSError:
+            pass
