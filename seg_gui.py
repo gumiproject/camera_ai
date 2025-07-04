@@ -18,7 +18,7 @@ from 테스트 import (
 # logger 정의
 logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
-
+#파일 선택 취소 버튼 추가 버전
 
 class App:
     def __init__(self, root):
