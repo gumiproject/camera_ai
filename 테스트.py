@@ -32,6 +32,9 @@ try:
 except ImportError:
     YOLO_AVAILABLE = False
 
+logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s',
+                    level=logging.INFO, datefmt='%H:%M:%S')
+logger = logging.getLogger(__name__)
 
 def choose_local_file() -> str:
     """파일 탐색기를 띄워 사용자가 파일을 선택하게 한 뒤, 경로를 반환."""
@@ -167,11 +170,13 @@ def process_with_yoloseg(inp: str, outp: str, model_name='yolov8n-seg.pt'):
 
 if __name__ == '__main__':
     # 로깅
+    """
     logging.basicConfig(
         format='%(asctime)s %(levelname)s: %(message)s',
         level=logging.INFO, datefmt='%H:%M:%S'
     )
     logger = logging.getLogger(__name__)
+    """
 
     # 입력 모드 선택
     mode = input('처리할 영상 선택: 1) YouTube 링크  2) 로컬 파일 [기본 1]: ').strip() or '1'
