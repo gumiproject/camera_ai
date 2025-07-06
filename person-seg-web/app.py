@@ -3,7 +3,7 @@
 
 import os, tempfile, logging, shutil, re, uuid, threading
 from urllib.parse import urlparse, parse_qs
-from flask import Flask, request, render_template, send_file, flash, redirect, url_for, jsonify
+from flask import Flask, request, render_template, send_file, redirect, url_for, jsonify
 from yt_dlp import YoutubeDL
 import cv2, numpy as np, mediapipe as mp
 
@@ -19,9 +19,9 @@ app = Flask(__name__)
 app.secret_key = "please-change-this"
 TMP_DIR = tempfile.gettempdir()
 
-# 작업 상태를 저장할 글로벌 딕셔너리
-# In-memory storage. For production, consider using Redis or a database.
+# 작업 상태 및 스레드 동기화를 위한 글로벌 변수
 TASKS = {}
+task_lock = threading.Lock()
 
 # ── YouTube URL 정규화 및 ID 추출 ──────────────────────────────────
 def get_yt_video_id(url: str) -> str | None:
@@ -59,20 +59,26 @@ def download_yt(url: str, out_path: str, max_h: int = 1080):
 def _process_video(task_id: str, processing_func, src_path: str, dst_path: str):
     """실제 비디오 처리 로직을 감싸고 진행도를 업데이트하는 함수"""
     try:
-        processing_func(task_id, src_path, dst_path)
-        TASKS[task_id]['status'] = 'complete'
-        TASKS[task_id]['progress'] = 100
+        # app 컨텍스트 내에서 실행하여 스레드 관련 문제 방지
+        with app.app_context():
+            processing_func(task_id, src_path, dst_path)
+        with task_lock:
+            TASKS[task_id]['status'] = 'complete'
+            TASKS[task_id]['progress'] = 100
     except Exception as e:
         logging.error(f"Task {task_id} failed: {e}")
-        TASKS[task_id]['status'] = 'error'
-        TASKS[task_id]['error'] = str(e)
+        with task_lock:
+            TASKS[task_id]['status'] = 'error'
+            TASKS[task_id]['error'] = str(e)
 
 # ── MediaPipe 세그멘테이션 (진행도 보고 기능 추가) ───────────────────
 def seg_mediapipe(task_id: str, inp: str, outp: str):
     seg = mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1)
     cap = cv2.VideoCapture(inp)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    TASKS[task_id]['status'] = 'processing'
+    
+    with task_lock:
+        TASKS[task_id]['status'] = 'processing'
     
     fps,w,h = cap.get(5) or 30.0, int(cap.get(3)), int(cap.get(4))
     out = cv2.VideoWriter(outp, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w,h))
@@ -86,7 +92,9 @@ def seg_mediapipe(task_id: str, inp: str, outp: str):
         mask = (m>0.5).astype(np.uint8) if m is not None else np.zeros((h,w),np.uint8)
         out.write(np.where(mask[...,None], f, 0))
         if total_frames > 0:
-            TASKS[task_id]['progress'] = int((frame_num / total_frames) * 100)
+            progress = int((frame_num / total_frames) * 100)
+            with task_lock:
+                TASKS[task_id]['progress'] = progress
 
     cap.release(); out.release(); seg.close()
 
@@ -96,7 +104,9 @@ def seg_yolo(task_id: str, inp: str, outp: str):
     model  = YOLO('yolov8n-seg.pt').to(device)
     cap = cv2.VideoCapture(inp)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    TASKS[task_id]['status'] = 'processing'
+
+    with task_lock:
+        TASKS[task_id]['status'] = 'processing'
     
     fps,w,h = cap.get(5) or 30.0, int(cap.get(3)), int(cap.get(4))
     out = cv2.VideoWriter(outp, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w,h))
@@ -115,7 +125,9 @@ def seg_yolo(task_id: str, inp: str, outp: str):
             f = np.zeros_like(f)
         out.write(f)
         if total_frames > 0:
-            TASKS[task_id]['progress'] = int((frame_num / total_frames) * 100)
+            progress = int((frame_num / total_frames) * 100)
+            with task_lock:
+                TASKS[task_id]['progress'] = progress
     
     cap.release(); out.release()
 
@@ -123,24 +135,17 @@ def seg_yolo(task_id: str, inp: str, outp: str):
 
 @app.route('/', methods=['GET'])
 def index():
-    # 사용자의 User-Agent 문자열을 가져옵니다.
     user_agent = request.headers.get('User-Agent', '').lower()
-    
-    # User-Agent에 모바일 기기를 나타내는 흔한 키워드가 있는지 확인합니다.
     mobile_keywords = ['mobi', 'iphone', 'ipad', 'android', 'ipod', 'windows phone']
     is_mobile = any(keyword in user_agent for keyword in mobile_keywords)
 
     if is_mobile:
-        # 모바일 기기라면 mobile.html을 렌더링합니다.
         return render_template('mobile.html', yolo_ok=YOLO_OK)
     else:
-        # 데스크톱 기기라면 기존 index.html을 렌더링합니다.
         return render_template('index.html', yolo_ok=YOLO_OK)
-    
 
 @app.route('/submit', methods=['POST'])
 def submit():
-    """작업을 제출하고 백그라운드에서 실행을 시작하는 라우트"""
     yt = request.form.get('youtube_url','').strip()
     up = request.files.get('video_file')
     if not yt and (not up or up.filename==''):
@@ -150,25 +155,26 @@ def submit():
     src = os.path.join(TMP_DIR, f"{task_id}.mp4")
     dst = os.path.join(TMP_DIR, f"{task_id}_out.mp4")
 
-    # 작업 상태 초기화
-    TASKS[task_id] = {'status': 'pending', 'progress': 0, 'src_path': src, 'dst_path': dst}
+    with task_lock:
+        TASKS[task_id] = {'status': 'pending', 'progress': 0, 'src_path': src, 'dst_path': dst}
 
     try:
         if yt:
-            TASKS[task_id]['status'] = 'downloading'
+            with task_lock:
+                TASKS[task_id]['status'] = 'downloading'
             download_yt(yt, src)
         else:
             up.save(src)
     except Exception as e:
         logging.error(f"Download/Upload error for task {task_id}: {e}")
-        TASKS[task_id]['status'] = 'error'
-        TASKS[task_id]['error'] = f"다운로드/업로드 오류: {e}"
+        with task_lock:
+            TASKS[task_id]['status'] = 'error'
+            TASKS[task_id]['error'] = f"다운로드/업로드 오류: {e}"
         return jsonify({"error": TASKS[task_id]['error']}), 500
 
     method = request.form.get('method','mp')
     process_func = seg_yolo if (method=='yolo' and YOLO_OK) else seg_mediapipe
     
-    # 백그라운드 스레드에서 비디오 처리 시작
     thread = threading.Thread(target=_process_video, args=(task_id, process_func, src, dst))
     thread.daemon = True
     thread.start()
@@ -177,23 +183,26 @@ def submit():
 
 @app.route('/progress/<task_id>', methods=['GET'])
 def progress(task_id):
-    """작업 진행 상태를 반환하는 라우트"""
-    task = TASKS.get(task_id)
+    with task_lock:
+        task = TASKS.get(task_id)
     if not task:
         return jsonify({"error": "작업을 찾을 수 없습니다."}), 404
     return jsonify(task)
 
 @app.route('/download/<task_id>', methods=['GET'])
 def download(task_id):
-    """완료된 파일을 다운로드하는 라우트"""
-    task = TASKS.get(task_id)
+    with task_lock:
+        task = TASKS.get(task_id)
+
     if not task or task.get('status') != 'complete':
-        flash("파일이 준비되지 않았거나 오류가 발생했습니다.", "danger")
+        # flash()와 redirect()는 컨텍스트 문제를 일으킬 수 있으므로 직접 사용하지 않습니다.
+        # 프론트엔드에서 이미 오류를 처리하고 있으므로 여기서는 단순히 메인으로 보냅니다.
+        logging.warning(f"Download attempt for incomplete/failed task: {task_id}")
         return redirect(url_for('index'))
     
     dst_path = task.get('dst_path')
     if not os.path.exists(dst_path):
-        flash("결과 파일을 찾을 수 없습니다.", "danger")
+        logging.error(f"Result file not found for task: {task_id}")
         return redirect(url_for('index'))
         
     return send_file(dst_path, as_attachment=True, download_name='result.mp4')
