@@ -120,9 +120,23 @@ def seg_yolo(task_id: str, inp: str, outp: str):
     cap.release(); out.release()
 
 # ── Flask 라우트 ───────────────────────────────────────────────────
+
 @app.route('/', methods=['GET'])
 def index():
-    return render_template('index.html', yolo_ok=YOLO_OK)
+    # 사용자의 User-Agent 문자열을 가져옵니다.
+    user_agent = request.headers.get('User-Agent', '').lower()
+    
+    # User-Agent에 모바일 기기를 나타내는 흔한 키워드가 있는지 확인합니다.
+    mobile_keywords = ['mobi', 'iphone', 'ipad', 'android', 'ipod', 'windows phone']
+    is_mobile = any(keyword in user_agent for keyword in mobile_keywords)
+
+    if is_mobile:
+        # 모바일 기기라면 mobile.html을 렌더링합니다.
+        return render_template('mobile.html', yolo_ok=YOLO_OK)
+    else:
+        # 데스크톱 기기라면 기존 index.html을 렌더링합니다.
+        return render_template('index.html', yolo_ok=YOLO_OK)
+    
 
 @app.route('/submit', methods=['POST'])
 def submit():
