@@ -125,7 +125,7 @@
 
                     if (data.status === 'complete') {
                         clearInterval(progressInterval);
-                        statusText.innerText = '✅ 변환 완료! 아래 버튼으로 다운로드하세요.';
+                        statusText.innerText = '변환 완료! 아래 버튼으로 다운로드하세요.';
                         progressBar.classList.remove('progress-bar-animated');
                         downloadButton.href = `/download/${taskId}`;
                         downloadButton.style.display = 'block';
@@ -134,7 +134,7 @@
                         // window.location.href = `/download/${taskId}`;
                     } else if (data.status === 'error') {
                         clearInterval(progressInterval);
-                        statusText.innerText = `❌ 오류 발생: ${data.error}`;
+                        statusText.innerText = `오류 발생: ${data.error}`;
                         progressBar.classList.add('bg-danger');
                         resetButton.style.display = 'block';
                     }
