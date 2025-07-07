@@ -3,19 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>People Isolation</title>
+  <title>People & Animal Isolation</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
         rel="stylesheet">
   <style>
     body { background-color: #f8f9fa; }
     .container { max-width: 680px; }
     .card { border-radius: 0.75rem; }
-    /* 진행도 컨테이너는 기본적으로 숨김 */
     #progress-container { display: none; }
     #video-preview-container {
         display: none; position: relative;
         overflow: hidden; width: 100%;
-        padding-top: 56.25%; /* 16:9 Aspect Ratio */
+        padding-top: 56.25%;
     }
     #video-preview-container iframe {
         position: absolute; top: 0; left: 0;
@@ -28,7 +27,7 @@
   <div class="container">
     <div class="card shadow-sm">
         <div class="card-body p-4 p-md-5">
-            <h1 class="mb-4 text-center">사람만 남기기</h1>
+            <h1 class="mb-4 text-center">배경에서 분리하기</h1>
             
             <div id="alert-container"></div>
 
@@ -46,13 +45,46 @@
                   <label for="video_file" class="form-label">비디오 파일 업로드</label>
                   <input type="file" name="video_file" id="video_file" accept="video/*" class="form-control">
                 </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">추출 대상</label>
+                    <div class="form-check form-check-inline">
+                      <input class="form-check-input" type="radio" name="target_subject" id="target_person" value="person" checked>
+                      <label class="form-check-label" for="target_person">사람</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                      <input class="form-check-input" type="radio" name="target_subject" id="target_animal" value="animal">
+                      <label class="form-check-label" for="target_animal">동물</label>
+                    </div>
+                </div>
+
+                <div id="animal-selection-list" class="mb-3 p-3 border rounded bg-light" style="display: none;">
+                    <p class="mb-2 small">분리할 동물을 모두 선택하세요.</p>
+                    <div class="row row-cols-3">
+                      <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" name="animal_classes" value="16" id="animal_dog"><label class="form-check-label" for="animal_dog">강아지</label></div></div>
+                      <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" name="animal_classes" value="15" id="animal_cat"><label class="form-check-label" for="animal_cat">고양이</label></div></div>
+                      <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" name="animal_classes" value="14" id="animal_bird"><label class="form-check-label" for="animal_bird">새</label></div></div>
+                      <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" name="animal_classes" value="17" id="animal_horse"><label class="form-check-label" for="animal_horse">말</label></div></div>
+                      <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" name="animal_classes" value="18" id="animal_sheep"><label class="form-check-label" for="animal_sheep">양</label></div></div>
+                      <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" name="animal_classes" value="19" id="animal_cow"><label class="form-check-label" for="animal_cow">소</label></div></div>
+                      <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" name="animal_classes" value="20" id="animal_elephant"><label class="form-check-label" for="animal_elephant">코끼리</label></div></div>
+                      <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" name="animal_classes" value="21" id="animal_bear"><label class="form-check-label" for="animal_bear">곰</label></div></div>
+                      <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" name="animal_classes" value="22" id="animal_zebra"><label class="form-check-label" for="animal_zebra">얼룩말</label></div></div>
+                      <div class="col"><div class="form-check"><input class="form-check-input" type="checkbox" name="animal_classes" value="23" id="animal_giraffe"><label class="form-check-label" for="animal_giraffe">기린</label></div></div>
+                    </div>
+                </div>
+
                 <div class="mb-4">
                   <label for="method" class="form-label">처리 방법</label>
                   <select name="method" id="method" class="form-select">
+                    <option value="mp">MediaPipe</option>
                     {% if yolo_ok %}<option value="yolo">YOLOv8</option>{% endif %}
-                    <option value="mp" selected>MediaPipe</option>
                   </select>
+                  <div class="form-text" id="method-help-text" style="display: none;">
+                    동물 추출은 YOLOv8 모델로만 가능합니다.
+                  </div>
                 </div>
+
                 <div class="d-grid">
                   <button type="submit" class="btn btn-primary btn-lg" id="submit-button">처리 시작</button>
                 </div>
@@ -73,32 +105,33 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    // 폼 요소들
     const processingForm = document.getElementById('processing-form');
     const formFieldset = document.getElementById('form-fieldset');
     const youtubeUrlInput = document.getElementById('youtube_url');
     const videoFileInput = document.getElementById('video_file');
+    const previewContainer = document.getElementById('video-preview-container');
     
-    // UI 요소들
     const progressContainer = document.getElementById('progress-container');
     const progressBar = document.getElementById('progress-bar');
     const statusText = document.getElementById('status-text');
     const downloadButton = document.getElementById('download-button');
     const resetButton = document.getElementById('reset-button');
     const alertContainer = document.getElementById('alert-container');
+    
+    const targetRadios = document.querySelectorAll('input[name="target_subject"]');
+    const animalSelectionList = document.getElementById('animal-selection-list');
+    const methodSelect = document.getElementById('method');
+    const methodHelpText = document.getElementById('method-help-text');
+    const yoloOption = methodSelect.querySelector('option[value="yolo"]');
 
     let progressInterval;
 
     function showAlert(message, category = 'danger') {
         const wrapper = document.createElement('div');
-        wrapper.innerHTML = [
-            `<div class="alert alert-${category} alert-dismissible fade show" role="alert">`,
-            `   ${message}`,
-            '   <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>',
-            '</div>'
-        ].join('');
-        alertContainer.innerHTML = ''; // 기존 알림 메시지 삭제
+        wrapper.innerHTML = `<div class="alert alert-${category} alert-dismissible fade show" role="alert">${message}<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>`;
+        alertContainer.innerHTML = '';
         alertContainer.append(wrapper);
     }
 
@@ -118,23 +151,20 @@
                     progressBar.style.width = progress + '%';
                     progressBar.innerText = progress + '%';
                     
-                    // 상태 텍스트 업데이트
                     if (data.status === 'pending') statusText.innerText = '작업 대기 중...';
                     else if (data.status === 'downloading') statusText.innerText = 'YouTube 영상 다운로드 중...';
                     else if (data.status === 'processing') statusText.innerText = '영상 처리 중...';
 
                     if (data.status === 'complete') {
                         clearInterval(progressInterval);
-                        statusText.innerText = '변환 완료! 아래 버튼으로 다운로드하세요.';
+                        statusText.innerText = '✅ 변환 완료! 아래 버튼으로 다운로드하세요.';
                         progressBar.classList.remove('progress-bar-animated');
                         downloadButton.href = `/download/${taskId}`;
                         downloadButton.style.display = 'block';
                         resetButton.style.display = 'block';
-                        // 자동 다운로드 (선택 사항)
-                        // window.location.href = `/download/${taskId}`;
                     } else if (data.status === 'error') {
                         clearInterval(progressInterval);
-                        statusText.innerText = `오류 발생: ${data.error}`;
+                        statusText.innerText = `❌ 오류 발생: ${data.error}`;
                         progressBar.classList.add('bg-danger');
                         resetButton.style.display = 'block';
                     }
@@ -149,39 +179,29 @@
 
     function resetUI() {
         formFieldset.disabled = false;
-        
         progressContainer.style.display = 'none';
         progressBar.style.width = '0%';
         progressBar.innerText = '0%';
         progressBar.classList.remove('bg-danger');
         progressBar.classList.add('progress-bar-animated');
-
         downloadButton.style.display = 'none';
         resetButton.style.display = 'none';
-        
-        // 입력 값 초기화 (선택사항)
-        // youtubeUrlInput.value = '';
-        // videoFileInput.value = '';
-        // document.getElementById('video-preview-container').style.display = 'none';
     }
 
     resetButton.addEventListener('click', resetUI);
 
     processingForm.addEventListener('submit', function(event) {
         event.preventDefault();
-
         const formData = new FormData(processingForm);
         if (!formData.get('youtube_url') && (!formData.get('video_file') || formData.get('video_file').size === 0)) {
             showAlert('YouTube URL을 입력하거나 비디오 파일을 업로드해 주세요.', 'warning');
             return;
         }
 
-        // *** 변경점: 폼을 숨기는 대신 비활성화 ***
         formFieldset.disabled = true;
         progressContainer.style.display = 'block';
-        alertContainer.innerHTML = ''; // 이전 알림 지우기
+        alertContainer.innerHTML = '';
         
-        // UI 초기화
         progressBar.style.width = '0%';
         progressBar.innerText = '0%';
         progressBar.classList.remove('bg-danger');
@@ -208,8 +228,25 @@
         });
     });
 
-    // --- 미리보기 로직 (이전과 동일) ---
-    const previewContainer = document.getElementById('video-preview-container');
+    targetRadios.forEach(radio => {
+        radio.addEventListener('change', (event) => {
+            const isAnimal = event.target.value === 'animal';
+            animalSelectionList.style.display = isAnimal ? 'block' : 'none';
+            if (isAnimal) {
+                if (yoloOption) {
+                    methodSelect.value = 'yolo';
+                    methodSelect.disabled = true;
+                    methodHelpText.style.display = 'block';
+                } else {
+                    showAlert('동물 추출을 지원하는 YOLOv8 모델을 현재 사용할 수 없습니다.', 'warning');
+                }
+            } else {
+                methodSelect.disabled = false;
+                methodHelpText.style.display = 'none';
+            }
+        });
+    });
+
     function getYouTubeId(url) {
         const regex = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
         return url.match(regex)?.[1] || null;

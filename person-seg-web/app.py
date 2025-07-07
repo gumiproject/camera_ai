@@ -36,15 +36,13 @@ def get_yt_video_id(url: str) -> str | None:
             return match.group(1)
     return None
 
-# ── yt-dlp 다운로드 (수정된 부분) ──────────────────────────────────
+# ── yt-dlp 다운로드 ────────────────────────────────────────────────
 def download_yt(url: str, out_path: str, max_h: int = 1080):
-    # URL이 유효한 유튜브 주소인지 확인합니다.
     if not get_yt_video_id(url):
         raise ValueError("유효하지 않은 YouTube URL입니다.")
     
-    # URL을 변환하지 않고 원본 그대로 사용합니다.
-    # clean_url = f"https://www.youtube.com/watch?v={video_id}"  <- 이 줄을 삭제하고 원본 URL을 사용합니다.
-    
+    proxy_url = os.environ.get('YT_DLP_PROXY') # 프록시 설정
+
     has_ffmpeg = shutil.which("ffmpeg") is not None
     opt = {
         "format": (f"bestvideo[height<={max_h}]+bestaudio/best"
@@ -55,16 +53,19 @@ def download_yt(url: str, out_path: str, max_h: int = 1080):
         "noplaylist": True,
         "quiet": True,
     }
+    
+    if proxy_url:
+        opt['proxy'] = proxy_url
+
     with YoutubeDL(opt) as ydl:
-        # 변환된 URL 대신 사용자가 입력한 원본 URL을 전달합니다.
         ydl.download([url])
 
-# ── 백그라운드 작업을 위한 함수 (진행도 업데이트 포함) ───────────────
-def _process_video(task_id: str, processing_func, src_path: str, dst_path: str):
-    """실제 비디오 처리 로직을 감싸고 진행도를 업데이트하는 함수"""
+# ── 백그라운드 작업을 위한 함수 ───────────────────────────────────
+def _process_video(task_id: str, processing_func, src_path: str, dst_path: str, **kwargs):
+    """ kwargs를 통해 'target_indices' 같은 동적 인자를 처리 함수에 전달 """
     try:
         with app.app_context():
-            processing_func(task_id, src_path, dst_path)
+            processing_func(task_id, src_path, dst_path, **kwargs)
         with task_lock:
             TASKS[task_id]['status'] = 'complete'
             TASKS[task_id]['progress'] = 100
@@ -74,8 +75,8 @@ def _process_video(task_id: str, processing_func, src_path: str, dst_path: str):
             TASKS[task_id]['status'] = 'error'
             TASKS[task_id]['error'] = str(e)
 
-# ── MediaPipe 세그멘테이션 (진행도 보고 기능 추가) ───────────────────
-def seg_mediapipe(task_id: str, inp: str, outp: str):
+# ── MediaPipe 세그멘테이션 ───────────────────────────────────────
+def seg_mediapipe(task_id: str, inp: str, outp: str, **kwargs): # kwargs를 받지만 사용하지 않음
     seg = mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1)
     cap = cv2.VideoCapture(inp)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -101,8 +102,11 @@ def seg_mediapipe(task_id: str, inp: str, outp: str):
 
     cap.release(); out.release(); seg.close()
 
-# ── YOLOv8-seg 세그멘테이션 (진행도 보고 기능 추가) ──────────────────
-def seg_yolo(task_id: str, inp: str, outp: str):
+# ── YOLOv8-seg 세그멘테이션 ───────────────────────────────────────
+def seg_yolo(task_id: str, inp: str, outp: str, target_indices: list):
+    if not target_indices:
+        raise ValueError("분리할 대상이 선택되지 않았습니다.")
+
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model  = YOLO('yolov8n-seg.pt').to(device)
     cap = cv2.VideoCapture(inp)
@@ -120,7 +124,9 @@ def seg_yolo(task_id: str, inp: str, outp: str):
         if not ok: break
         frame_num += 1
         res = model(f, verbose=False)[0]
-        mk = [m.cpu().numpy() for c,m in zip(res.boxes.cls, res.masks.data) if int(c)==0] if res.masks else []
+        
+        mk = [m.cpu().numpy() for c,m in zip(res.boxes.cls, res.masks.data) if int(c) in target_indices] if res.masks else []
+
         if mk:
             up = cv2.resize(np.clip(sum(mk),0,1).astype(np.uint8),(w,h),cv2.INTER_NEAREST)
             f  = np.where(up[...,None], f, 0)
@@ -176,9 +182,33 @@ def submit():
         return jsonify({"error": TASKS[task_id]['error']}), 500
 
     method = request.form.get('method','mp')
-    process_func = seg_yolo if (method=='yolo' and YOLO_OK) else seg_mediapipe
+    target_subject = request.form.get('target_subject', 'person')
     
-    thread = threading.Thread(target=_process_video, args=(task_id, process_func, src, dst))
+    process_kwargs = {}
+    
+    if target_subject == 'person':
+        if method == 'yolo' and YOLO_OK:
+            process_func = seg_yolo
+            process_kwargs['target_indices'] = [0]
+        else:
+            process_func = seg_mediapipe
+    
+    elif target_subject == 'animal':
+        if not YOLO_OK:
+            return jsonify({"error": "동물 탐지는 YOLO 모델이 필요하지만, 현재 서버에서 사용할 수 없습니다."}), 400
+        
+        process_func = seg_yolo
+        animal_indices = [int(val) for val in request.form.getlist('animal_classes')]
+        
+        if not animal_indices:
+            return jsonify({"error": "동물 종류를 하나 이상 선택해주세요."}), 400
+            
+        process_kwargs['target_indices'] = animal_indices
+    
+    else:
+        return jsonify({"error": "알 수 없는 대상입니다."}), 400
+
+    thread = threading.Thread(target=_process_video, args=(task_id, process_func, src, dst), kwargs=process_kwargs)
     thread.daemon = True
     thread.start()
     
