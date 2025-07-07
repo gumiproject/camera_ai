@@ -42,6 +42,34 @@
             <label class="form-check-label" for="target_animal">동물</label>
           </div>
         </div>
+        
+        <div id="animal-selector" class="mb-3 border rounded p-2" style="display: none;">
+          <label class="form-label d-block small">분류할 동물 선택 (다중 가능)</label>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="checkbox" name="animal_classes" value="16" id="animal_dog">
+            <label class="form-check-label small" for="animal_dog">강아지</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="checkbox" name="animal_classes" value="15" id="animal_cat">
+            <label class="form-check-label small" for="animal_cat">고양이</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="checkbox" name="animal_classes" value="14" id="animal_bird">
+            <label class="form-check-label small" for="animal_bird">새</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="checkbox" name="animal_classes" value="17" id="animal_horse">
+            <label class="form-check-label small" for="animal_horse">말</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="checkbox" name="animal_classes" value="18" id="animal_sheep">
+            <label class="form-check-label small" for="animal_sheep">양</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="checkbox" name="animal_classes" value="19" id="animal_cow">
+            <label class="form-check-label small" for="animal_cow">소</label>
+          </div>
+        </div>
 
         <div class="mb-4">
           <label for="method" class="form-label">처리 방법</label>
@@ -73,9 +101,6 @@
   </div>
 
   <script>
-    // 이전에 사용했던 모든 자바스크립트 코드를 여기에 붙여넣습니다.
-    // 아래는 대상(사람/동물) 선택 로직을 포함한 전체 스크립트입니다.
-
     // 폼 요소들
     const processingForm = document.getElementById('processing-form');
     const formFieldset = document.getElementById('form-fieldset');
@@ -90,31 +115,34 @@
     const resetButton = document.getElementById('reset-button');
     const alertContainer = document.getElementById('alert-container');
     
-    // 새로 추가된 UI 요소들
+    // 대상 선택 UI 요소들
     const targetRadios = document.querySelectorAll('input[name="target_subject"]');
     const methodSelect = document.getElementById('method');
     const methodHelpText = document.getElementById('method-help-text');
     const yoloOption = methodSelect.querySelector('option[value="yolo"]');
+    const animalSelector = document.getElementById('animal-selector'); // 동물 선택창
 
     let progressInterval;
 
-    // 대상(사람/동물) 선택에 따른 처리 방법 UI 변경
+    // (새로 추가된 로직) 대상(사람/동물) 선택에 따른 UI 변경
     targetRadios.forEach(radio => {
         radio.addEventListener('change', (event) => {
-        if (event.target.value === 'animal') {
+          if (event.target.value === 'animal') {
             // '동물' 선택 시
+            animalSelector.style.display = 'block'; // 동물 선택창 보이기
             if (yoloOption) {
-            methodSelect.value = 'yolo'; // YOLOv8으로 강제 선택
-            methodSelect.disabled = true; // 처리 방법 변경 불가
-            methodHelpText.style.display = 'block'; // 안내 문구 표시
+              methodSelect.value = 'yolo';
+              methodSelect.disabled = true;
+              methodHelpText.style.display = 'block';
             } else {
                 showAlert('동물 추출을 지원하는 YOLOv8 모델을 현재 사용할 수 없습니다.', 'warning');
             }
-        } else {
+          } else {
             // '사람' 선택 시
-            methodSelect.disabled = false; // 처리 방법 변경 가능
-            methodHelpText.style.display = 'none'; // 안내 문구 숨김
-        }
+            animalSelector.style.display = 'none'; // 동물 선택창 숨기기
+            methodSelect.disabled = false;
+            methodHelpText.style.display = 'none';
+          }
         });
     });
 
@@ -202,8 +230,6 @@
         progressBar.innerText = '0%';
         progressBar.classList.remove('bg-danger');
         progressBar.classList.add('progress-bar-animated');
-        downloadButton.style.display = 'none';
-        resetButton.style.display = 'none';
         statusText.innerText = '서버에 작업을 요청하는 중입니다...';
 
         fetch('/submit', {
