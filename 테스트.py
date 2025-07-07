@@ -109,7 +109,7 @@ def process_with_mediapipe(inp: str, outp: str, progress_callback=None):
     seg.close()
     logger.info("✅ MediaPipe 완료: %s", outp)
 
-def process_with_yoloseg(inp: str, outp: str, model_name='yolov8n-seg.pt', progress_callback=None):
+def process_with_yoloseg(inp: str, outp: str, model_name='yolov8n-seg.pt', target_indices=None, progress_callback=None):
     logger.info("▶ YOLOv8-seg 모델 로드: %s", model_name)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = YOLO(model_name).to(device)
@@ -122,6 +122,9 @@ def process_with_yoloseg(inp: str, outp: str, model_name='yolov8n-seg.pt', progr
     fourcc = cv2.VideoWriter_fourcc(*'avc1')
     writer = cv2.VideoWriter(outp, fourcc, fps, (w, h))
 
+    if target_indices is None:
+        target_indices = [0]  # 기본: 사람
+
     idx = 0
     while True:
         ret, frame = cap.read()
@@ -132,7 +135,7 @@ def process_with_yoloseg(inp: str, outp: str, model_name='yolov8n-seg.pt', progr
         masks = []
         if results.masks and results.masks.data is not None:
             for cls, m in zip(results.boxes.cls, results.masks.data):
-                if int(cls) == 0:
+                if int(cls) in target_indices:
                     masks.append(m.cpu().numpy())
 
         if masks:

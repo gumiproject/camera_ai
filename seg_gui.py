@@ -21,7 +21,7 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title("Segmentation GUI")
-        self.root.geometry("480x540")
+        self.root.geometry("480x700")
         self.root.resizable(False, False)
         self.root.configure(bg="white")
 
@@ -32,7 +32,7 @@ class App:
         container = tk.Frame(root, bg="white")
         container.pack(fill='both', expand=True, padx=10, pady=10)
 
-        tk.Label(container, text="Segmentation GUI", font=("맑은 고딕", 16, "bold"), bg="white").pack(pady=(0, 10))
+        tk.Label(container, text="Segmentation 프로그램", font=("맑은 고딕", 16, "bold"), bg="white").pack(pady=(0, 10))
 
         tk.Label(container, text="1. 유튜브 링크 (또는 비워두기)", anchor='w', bg="white").pack(fill='x')
         self.entry_url = tk.Entry(container, bg="white")
@@ -48,9 +48,9 @@ class App:
         file_frame.pack(fill='x')
         file_frame.columnconfigure(0, weight=7)
         file_frame.columnconfigure(1, weight=3)
-        self.btn_choose = tk.Button(file_frame, text="파일 선택", bg= "blue", fg="white", command=self.choose_file)
+        self.btn_choose = tk.Button(file_frame, text="파일 선택", bg="#2196F3", fg="white", command=self.choose_file)
         self.btn_choose.grid(row=0, column=0, sticky='ew', padx=(0, 5))
-        self.btn_clear = tk.Button(file_frame, text="선택 취소", bg= "red", fg="white", command=self.clear_file)
+        self.btn_clear = tk.Button(file_frame, text="선택 취소", bg="#f44336", fg="white", command=self.clear_file)
         self.btn_clear.grid(row=0, column=1, sticky='ew')
 
         tk.Label(container, text="3. 결과 저장 파일명", anchor='w', bg="white").pack(fill='x', pady=(10, 0))
@@ -62,12 +62,53 @@ class App:
         self.combo_method.current(0 if YOLO_AVAILABLE else 1)
         self.combo_method.pack(fill='x')
 
+        # 추출 대상: 사람/동물
+        self.extract_target = tk.StringVar(value='person')
+        frame_target = tk.Frame(container, bg="white")
+        frame_target.pack(fill='x', pady=(10, 0))
+
+        tk.Label(frame_target, text="추출 대상", bg="white").pack(side='left')
+        tk.Radiobutton(frame_target, text="사람", variable=self.extract_target, value='person', bg="white", command=self.toggle_animal_options).pack(side='left')
+        tk.Radiobutton(frame_target, text="동물", variable=self.extract_target, value='animal', bg="white", command=self.toggle_animal_options).pack(side='left')
+
+        # 동물 선택 체크박스
+        self.animal_vars = {}
+        self.animal_classes = {
+            "강아지": 16, "고양이": 15, "말": 17, "새": 14,
+            "코끼리": 20, "양": 19, "소": 21, "곰": 23, "얼룩말": 24, "기린": 25
+        }
+
+        frame_animals = tk.LabelFrame(container, text="분리할 동물을 선택하세요", bg="white")
+        frame_animals.pack(fill='x', padx=5, pady=(5, 10))
+        self.frame_animals = frame_animals
+
+        row, col = 0, 0
+        for name in self.animal_classes:
+            var = tk.BooleanVar()
+            cb = tk.Checkbutton(frame_animals, text=name, variable=var, bg="white")
+            cb.grid(row=row, column=col, sticky='w', padx=5)
+            self.animal_vars[name] = var
+            col += 1
+            if col >= 4:
+                row += 1
+                col = 0
+
+        self.toggle_animal_options()
+
         self.progress = Progressbar(container, mode='determinate', maximum=100)
         self.progress.pack(fill='x', pady=(5, 0))
         self.progress['value'] = 0
 
-        self.btn_run = tk.Button(container, text="처리 시작", bg= "blue", fg="white", command=self.run_thread)
+        self.btn_run = tk.Button(container, text="처리 시작", bg="#4CAF50", fg="white", command=self.run_thread)
         self.btn_run.pack(pady=15, fill='x')
+
+    def toggle_animal_options(self):
+        if self.extract_target.get() == 'animal':
+            for child in self.frame_animals.winfo_children():
+                child.configure(state='normal')
+        else:
+            for child in self.frame_animals.winfo_children():
+                child.configure(state='disabled')
 
     def update_thumbnail(self, event=None):
         url = self.entry_url.get().strip()
@@ -145,7 +186,16 @@ class App:
 
         try:
             if method == "YOLOv8" and YOLO_AVAILABLE:
-                process_with_yoloseg(inp, outp, progress_callback=self.update_progress)
+                if self.extract_target.get() == 'person':
+                    target_indices = [0]
+                else:
+                    target_indices = [self.animal_classes[k] for k, v in self.animal_vars.items() if v.get()]
+                    if not target_indices:
+                        messagebox.showerror("입력 오류", "분리할 동물을 하나 이상 선택하세요.")
+                        self.btn_run.config(state='normal')
+                        return
+
+                process_with_yoloseg(inp, outp, target_indices=target_indices, progress_callback=self.update_progress)
             else:
                 process_with_mediapipe(inp, outp, progress_callback=self.update_progress)
 
