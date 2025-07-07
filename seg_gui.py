@@ -106,9 +106,14 @@ class App:
         if self.extract_target.get() == 'animal':
             for child in self.frame_animals.winfo_children():
                 child.configure(state='normal')
+            # MediaPipe 비활성화
+            self.combo_method.set("YOLOv8")
+            self.combo_method.configure(state='disabled')
+            messagebox.showinfo("알림", "동물 분리는 YOLOv8만 지원됩니다.")
         else:
             for child in self.frame_animals.winfo_children():
                 child.configure(state='disabled')
+            self.combo_method.configure(state='readonly')
 
     def update_thumbnail(self, event=None):
         url = self.entry_url.get().strip()
@@ -197,6 +202,10 @@ class App:
 
                 process_with_yoloseg(inp, outp, target_indices=target_indices, progress_callback=self.update_progress)
             else:
+                if self.extract_target.get() == 'animal':
+                    messagebox.showerror("지원되지 않음", "동물 분리는 MediaPipe에서 지원되지 않습니다.")
+                    self.btn_run.config(state='normal')
+                    return
                 process_with_mediapipe(inp, outp, progress_callback=self.update_progress)
 
             self.progress['value'] = 100
