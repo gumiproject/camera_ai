@@ -36,12 +36,15 @@ def get_yt_video_id(url: str) -> str | None:
             return match.group(1)
     return None
 
-# ── yt-dlp 다운로드 ────────────────────────────────────────────────
+# ── yt-dlp 다운로드 (수정된 부분) ──────────────────────────────────
 def download_yt(url: str, out_path: str, max_h: int = 1080):
-    video_id = get_yt_video_id(url)
-    if not video_id:
+    # URL이 유효한 유튜브 주소인지 확인합니다.
+    if not get_yt_video_id(url):
         raise ValueError("유효하지 않은 YouTube URL입니다.")
-    clean_url = f"https://www.youtube.com/watch?v={video_id}"
+    
+    # URL을 변환하지 않고 원본 그대로 사용합니다.
+    # clean_url = f"https://www.youtube.com/watch?v={video_id}"  <- 이 줄을 삭제하고 원본 URL을 사용합니다.
+    
     has_ffmpeg = shutil.which("ffmpeg") is not None
     opt = {
         "format": (f"bestvideo[height<={max_h}]+bestaudio/best"
@@ -53,13 +56,13 @@ def download_yt(url: str, out_path: str, max_h: int = 1080):
         "quiet": True,
     }
     with YoutubeDL(opt) as ydl:
-        ydl.download([clean_url])
+        # 변환된 URL 대신 사용자가 입력한 원본 URL을 전달합니다.
+        ydl.download([url])
 
 # ── 백그라운드 작업을 위한 함수 (진행도 업데이트 포함) ───────────────
 def _process_video(task_id: str, processing_func, src_path: str, dst_path: str):
     """실제 비디오 처리 로직을 감싸고 진행도를 업데이트하는 함수"""
     try:
-        # app 컨텍스트 내에서 실행하여 스레드 관련 문제 방지
         with app.app_context():
             processing_func(task_id, src_path, dst_path)
         with task_lock:
@@ -195,8 +198,6 @@ def download(task_id):
         task = TASKS.get(task_id)
 
     if not task or task.get('status') != 'complete':
-        # flash()와 redirect()는 컨텍스트 문제를 일으킬 수 있으므로 직접 사용하지 않습니다.
-        # 프론트엔드에서 이미 오류를 처리하고 있으므로 여기서는 단순히 메인으로 보냅니다.
         logging.warning(f"Download attempt for incomplete/failed task: {task_id}")
         return redirect(url_for('index'))
     
