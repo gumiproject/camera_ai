@@ -23,58 +23,55 @@ class App:
         self.root.title("Segmentation GUI")
         self.root.geometry("480x540")
         self.root.resizable(False, False)
+        self.root.configure(bg="white")
 
         self.input_path = ""
         self.temp_file_prefix = None
         self.output_path = tk.StringVar(value="output.mp4")
 
-        container = tk.Frame(root)
+        container = tk.Frame(root, bg="white")
         container.pack(fill='both', expand=True, padx=10, pady=10)
 
-        tk.Label(container, text="Segmentation 프로그램", font=("맑은 고딕", 16, "bold")).pack(pady=(0, 10))
+        tk.Label(container, text="Segmentation GUI", font=("맑은 고딕", 16, "bold"), bg="white").pack(pady=(0, 10))
 
-        # 1. 유튜브 링크
-        tk.Label(container, text="1. 유튜브 링크 (또는 비워두기)", anchor='w').pack(fill='x')
-        self.entry_url = tk.Entry(container)
+        tk.Label(container, text="1. 유튜브 링크 (또는 비워두기)", anchor='w', bg="white").pack(fill='x')
+        self.entry_url = tk.Entry(container, bg="white")
         self.entry_url.pack(fill='x')
         self.entry_url.bind("<Return>", self.update_thumbnail)
+        self.entry_url.bind("<KeyRelease>", self.check_url_clear)
 
-        self.thumbnail_label = tk.Label(container)
+        self.thumbnail_label = tk.Label(container, bg="white")
         self.thumbnail_label.pack(pady=5)
 
-        # 2. 로컬 파일 선택
-        tk.Label(container, text="2. 또는 로컬 영상 선택", anchor='w').pack(fill='x', pady=(10, 0))
-        file_frame = tk.Frame(container)
+        tk.Label(container, text="2. 또는 로컬 영상 선택", anchor='w', bg="white").pack(fill='x', pady=(10, 0))
+        file_frame = tk.Frame(container, bg="white")
         file_frame.pack(fill='x')
         file_frame.columnconfigure(0, weight=7)
         file_frame.columnconfigure(1, weight=3)
-        self.btn_choose = tk.Button(file_frame, text="파일 선택", command=self.choose_file)
+        self.btn_choose = tk.Button(file_frame, text="파일 선택", bg= "blue", fg="white", command=self.choose_file)
         self.btn_choose.grid(row=0, column=0, sticky='ew', padx=(0, 5))
-        self.btn_clear = tk.Button(file_frame, text="선택 취소", command=self.clear_file)
+        self.btn_clear = tk.Button(file_frame, text="선택 취소", bg= "red", fg="white", command=self.clear_file)
         self.btn_clear.grid(row=0, column=1, sticky='ew')
 
-        # 3. 결과 파일명
-        tk.Label(container, text="3. 결과 저장 파일명", anchor='w').pack(fill='x', pady=(10, 0))
-        self.entry_out = tk.Entry(container, textvariable=self.output_path)
+        tk.Label(container, text="3. 결과 저장 파일명", anchor='w', bg="white").pack(fill='x', pady=(10, 0))
+        self.entry_out = tk.Entry(container, textvariable=self.output_path, bg="white")
         self.entry_out.pack(fill='x')
 
-        # 4. 세그멘테이션 방식
-        tk.Label(container, text="4. 세그멘테이션 방식", anchor='w').pack(fill='x', pady=(10, 0))
+        tk.Label(container, text="4. 세그멘테이션 방식", anchor='w', bg="white").pack(fill='x', pady=(10, 0))
         self.combo_method = Combobox(container, values=["YOLOv8", "MediaPipe"])
         self.combo_method.current(0 if YOLO_AVAILABLE else 1)
         self.combo_method.pack(fill='x')
 
-        # 진행바
         self.progress = Progressbar(container, mode='determinate', maximum=100)
         self.progress.pack(fill='x', pady=(5, 0))
         self.progress['value'] = 0
 
-        # 실행 버튼
-        self.btn_run = tk.Button(container, text="처리 시작", command=self.run_thread)
+        self.btn_run = tk.Button(container, text="처리 시작", bg= "blue", fg="white", command=self.run_thread)
         self.btn_run.pack(pady=15, fill='x')
 
     def update_thumbnail(self, event=None):
         url = self.entry_url.get().strip()
+
         match = re.search(r'(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})', url)
         if not match:
             self.thumbnail_label.config(image='', text="올바른 유튜브 URL이 아닙니다.")
@@ -92,6 +89,15 @@ class App:
         except Exception:
             self.thumbnail_label.config(image='', text="썸네일 로딩 실패")
 
+    def check_url_clear(self, event=None):
+        url = self.entry_url.get().strip()
+        if url:
+            self.btn_choose.config(state='disabled')
+            self.btn_clear.config(state='disabled')
+        else:
+            self.btn_choose.config(state='normal')
+            self.btn_clear.config(state='normal')
+
     def update_progress(self, percent):
         self.progress['value'] = percent
         self.root.update_idletasks()
@@ -101,13 +107,15 @@ class App:
         if path:
             self.input_path = path
             self.btn_choose.config(text=os.path.basename(path))
+            self.entry_url.config(state='disabled')
 
     def clear_file(self):
         self.input_path = ""
         self.btn_choose.config(text="파일 선택")
+        self.entry_url.config(state='normal')
 
     def run_thread(self):
-        self.btn_run.config(state='disabled')  # 버튼 비활성화
+        self.btn_run.config(state='disabled')
         self.progress['value'] = 0
         self.progress.pack(fill='x', pady=(5, 0))
         threading.Thread(target=self.run_process).start()
@@ -125,12 +133,14 @@ class App:
             except Exception as e:
                 self.progress.pack_forget()
                 messagebox.showerror("유튜브 다운로드 오류", str(e))
+                self.btn_run.config(state='normal')
                 return
         elif self.input_path:
             inp = self.input_path
         else:
             self.progress.pack_forget()
             messagebox.showerror("입력 오류", "유튜브 링크나 로컬 파일 중 하나를 선택하세요.")
+            self.btn_run.config(state='normal')
             return
 
         try:
@@ -145,7 +155,7 @@ class App:
             messagebox.showerror("처리 오류", str(e))
         finally:
             self.progress.pack_forget()
-            self.btn_run.config(state='normal')  # 버튼 다시 활성화
+            self.btn_run.config(state='normal')
             if self.temp_file_prefix:
                 for ext in ('.mp4', '.m4a', '.webm', ''):
                     try:
